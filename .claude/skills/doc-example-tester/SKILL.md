@@ -1,168 +1,127 @@
 ---
 name: doc-example-tester
-description: Generate and validate regression tests for PostgreSQL extension documentation examples. Ensures all SQL examples in user documentation have corresponding tests in `sql/doc_examples.sql` and that test output matches documented results.
+description: >
+  Generate and validate regression tests for SQL examples in extension
+  documentation. Ensures every `-- Example:` block in README.md and doc/*.md
+  has a matching test in sql/doc_examples.sql, that the test runs, and that
+  documented output matches actual output. Trigger when the user says
+  "verify doc examples", "generate doc tests", "update doc_examples.sql",
+  or after editing documentation SQL.
+allowed-tools: Read, Grep, Glob, Bash(make:*), Edit, AskUserQuestion
 ---
 
-# doc-example-tester Skill
+# Documentation Example Test Generator
 
-## Purpose
+You are validating that every SQL example shown to users in documentation has
+a matching, passing regression test. Drift between documentation and actual
+behavior is a recurring source of user confusion; this skill catches it.
 
-Generate and validate regression tests for PostgreSQL extension documentation examples. Ensures:
-1. Every `-- Example:` in docs has a test in sql/doc_examples.sql
-2. Test SQL matches documented SQL
-3. Actual output matches documented output
+## Step 1: Discover Examples
 
-## When to Use
+Find every `-- Example:` block in user-facing docs:
 
-- User says "generate doc example tests", "update doc_examples.sql", "verify doc examples"
-- When documentation SQL examples are added or modified
-- To validate that documented output matches actual test results
-**CRITICAL:** This skill has mandatory reporting requirements. You MUST:
-1. Always present Phase 1 Step 5 Summary with exact counts
-2. Always do Phase 2 Interactive Triage if mismatches found
-3. Never make changes without user approval in Phase 2
-**IMPORTANT:** This skill involves complex multi-step validation. When invoked, use `runSubagent` tool to execute the workflow in a dedicated agent. This ensures proper step tracking and prevents skipped validation.
-
-## Critical Validation Requirement
-
-**Never skip validation steps.** You MUST:
-1. Count examples found in documentation
-2. Count tests generated/verified
-3. Count tests executed
-4. Count examples where output was compared
-5. **NEW: Validate row counts match exactly**
-6. **NEW: Log all comparison details for debugging**
-
-**All counts MUST match.** Report any discrepancies immediately.
-
-**MANDATORY REPORTING:** Always present Step 5 Summary in exact format:
-```
-✓ Step 1: Found N examples
-✓ Step 2: N tests exist (M generated, P unchanged)
-✓ Step 3: N tests executed (P passed, F failed)
-✓ Step 4: N examples validated (M matches, X mismatches)
-✓ All counts match: Yes/No (N=N=N=N)
+```bash
+grep -n "^-- Example:" README.md doc/*.md 2>/dev/null
 ```
 
-**MANDATORY PHASE 2:** If ANY mismatches found, MUST proceed to Phase 2 Interactive Triage. Do NOT make changes without user approval.
+For each match, extract:
+- File path and line number
+- Description (text after `-- Example:`)
+- SQL statements that follow
+- Documented output (lines beginning with `--` immediately after the SQL,
+  including any `(N rows)` line)
 
-**NEW FAIL-SAFE:** If validation logic cannot clearly parse expected vs actual output, ALWAYS flag for manual review rather than assuming success.
+Record the count: **examples found = N**.
 
-If you find yourself reporting success without validating output, STOP and complete validation first.
+## Step 2: Match Against Existing Tests
 
-## Pattern Specifications
+Read `sql/doc_examples.sql`. Each test block is headed by a comment of the form:
 
-**Documentation Example (required eyecatcher):**
-```markdown
 ```sql
--- Example: <description>
-[-- Without extension (stock PostgreSQL):]
-<SQL statements>
-[-- <inline expected output>]
-```
+-- ============================================================================
+-- README.md: <description> (~line <N>)
+-- ============================================================================
 ```
 
-**Test Block Header (generated):**
+Match examples to tests by **file + line number (±5 lines tolerance)**, not by
+description (descriptions drift). Build:
+
+| State | Action |
+|-------|--------|
+| Example has matching test | Leave alone |
+| Example has no test | Generate one (Step 3) |
+| Test has no matching example | Flag for user — example may have been removed |
+
+## Step 3: Generate Missing Tests
+
+For each unmatched example, append to `sql/doc_examples.sql`:
+
 ```sql
 -- ============================================================================
 -- <file>: <description> (~line <N>)
 -- ============================================================================
+<SQL from the example>
 ```
 
-**Matching:** Examples and tests are matched by **file + line number** (±5 tolerance), NOT description.
+Update `expected/doc_examples.out` with the documented output, formatted to
+match `pg_regress` conventions (`\pset format unaligned` if that's the file's
+header).
 
-## Workflow
+## Step 4: Run Tests
 
-### Phase 1: Bulk Discovery & Validation
-
-**Step 1: Parse Documentation** (use read_file or grep)
-- Find all `-- Example:` markers in README.md and doc/*.md
-- Extract: file, line number, description, SQL, expected output
-- Report: "Found N examples"
-
-**Step 2: Verify/Generate Tests**
-- Check sql/doc_examples.sql for matching tests (file + line ±5)
-- Generate missing tests if needed
-- Report: "N tests exist (M generated, P unchanged)"
-
-**Step 3: Run Tests**
-```bash
-make installcheck REGRESS=doc_examples
-```
-- Report: "N tests executed (P passed, F failed)"
-
-**Step 4: Validate Output** (MANDATORY - never skip)
-- For EACH example, compare documented output vs actual output in results/doc_examples.out
-- **STRICT VALIDATION REQUIREMENTS:**
-  1. **Extract documented output**: All lines starting with `-- ` in markdown after SQL query
-  2. **Parse row count**: Extract `(N rows)` from documented output 
-  3. **Parse data rows**: Extract table data from documented `-- ` comments
-  4. **Find actual output**: Locate corresponding SQL in results/doc_examples.out
-  5. **Compare row counts**: Documented `(N rows)` MUST match actual row count
-  6. **Compare data**: Each documented data row must match actual output row
-  7. **Column headers**: Documented column headers must match actual headers
-- **FAIL-SAFE RULE**: If parsing is ambiguous or unclear, FLAG for manual review
-- **LOGGING**: For each comparison, log: "Doc shows N rows, actual shows M rows"
-- Report: "N examples validated (M matches, X mismatches)"
-
-**Step 5: Summary**
-```
-✓ Step 1: Found N examples
-✓ Step 2: N tests exist
-✓ Step 3: N tests executed (P passed, F failed)
-✓ Step 4: N examples validated (M matches, X mismatches)
-✓ All counts match: Yes/No (N=N=N=N)
-```
-
-If mismatches found → Phase 2
-
-### Phase 2: Interactive Triage
-
-**MANDATORY when mismatches found.** For each mismatch, show:
-- Documentation location and SQL
-- Documented expected output (with row count)
-- Actual test output (with row count)
-- **Detailed comparison**: Row-by-row diff showing exactly what differs
-- **Root cause analysis**: "Doc shows N rows but actual shows M rows" or "Row X differs: doc='...' actual='...'"
-- Side-by-side diff
-
-**REQUIRED USER INTERACTION:** Present options and WAIT for user choice:
-- **[F]ix documentation** - Update markdown with correct output
-- **[A]ccept results** - Documentation outdated, code is correct (update both doc and expected/)
-- **[B]ug in code** - Add TODO comments, leave failing
-- **[S]kip** - Add TODO comments, return later
-
-**DO NOT make changes without user approval.**
-
-## Quick Reference
-
-**Find examples:**
-```bash
-grep -n "^-- Example:" README.md doc/*.md
-```
-
-**Find tests:**
-```bash
-grep -n "^-- README.md:" sql/doc_examples.sql | grep "~line"
-```
-
-**Run tests:**
 ```bash
 make installcheck REGRESS=doc_examples
 ```
 
-**Compare output:** Read documented output from markdown `-- ` lines and compare to results/doc_examples.out
+Record: **tests executed = M, passed = P, failed = F**.
 
-**CRITICAL DEBUGGING:** When validation reports success but user finds mismatches, the skill logic failed. Always log:
+If `M ≠ N`, investigate before continuing — a missing test slipped through
+generation.
+
+## Step 5: Validate Output
+
+For each example, compare the documented output (from Step 1) against the
+actual output in `results/doc_examples.out`. Compare:
+
+- Column headers
+- Row count (`(N rows)` line)
+- Each data row, in order
+
+If any aspect is ambiguous (e.g., output reformatted by `\pset`), flag the
+example for manual review rather than silently accepting it.
+
+Record: **examples validated = V, matches = X, mismatches = Y**.
+
+## Step 6: Report
+
 ```
-Example X: Doc shows "(N rows)" vs Actual shows "(M rows)" 
-Example X: Doc row 1: "-- Alice | Widget" vs Actual row 1: "Alice | Widget"
-Example X: MISMATCH - Row counts differ: N ≠ M
+## Doc Example Test Report
+
+Examples found:    N
+Tests after run:   N (M generated, P unchanged)
+Tests executed:    N (P passed, F failed)
+Examples validated: N (X matches, Y mismatches)
+
+Counts consistent: Yes / No
+
+### Mismatches
+1. README.md:45 "Quick Start"
+   Doc shows 3 rows, actual produced 2 rows.
+   Doc row 1: "Alice | Widget"
+   Actual row 1: "alice | widget"
+
+### Tests with no matching example
+1. sql/doc_examples.sql line 80 "Old API demo" — example removed from docs?
 ```
 
-## Success Criteria
+## Step 7: Triage (if mismatches exist)
 
-- All counts match (examples = tests = executed = validated)
-- All output matches OR mismatches explained with [F]ix/[A]ccept/[B]ug/[S]kip
-- No validation steps skipped
+For each mismatch, present the doc location, documented vs actual output,
+and ask the user via `AskUserQuestion` which to do:
 
+- **Fix documentation** — update the markdown to match actual output
+- **Update test** — code is correct, regenerate `expected/doc_examples.out`
+- **Bug** — leave the test failing, add `-- TODO: fix` and report
+- **Skip** — defer
+
+Do not change documentation or expected output without explicit user choice.

@@ -4,3 +4,4 @@ results/
 *.dylib
 *.bc
 *.bc.tmp
+.claude/settings.local.json

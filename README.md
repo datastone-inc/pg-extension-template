@@ -2,30 +2,27 @@
 
 GitHub template repository for PostgreSQL backend C extensions.
 
-Provides a consistent, pre-configured starting point for extensions, hooks,
-callbacks, and PL/pgSQL — ready for TDD with Claude Code and VS Code Copilot.
+A consistent, pre-configured starting point for extensions, hooks, callbacks,
+and PL/pgSQL — ready for TDD with both Claude Code and VS Code Copilot.
 
 ## What's Included
 
 | File / Directory | Purpose |
 |-----------------|---------|
-| `CLAUDE.md` | Claude Code project instructions (commands, layout, skills) |
-| `.github/copilot-instructions.md` | VS Code Copilot instructions (same content, Copilot format) |
-| `.specify/memory/constitution.md` | Governing code style, error handling, security, performance |
-| `.claude/skills/code-review/` | PostgreSQL C extension code review checklist |
-| `.claude/skills/test-coverage/` | Find missing test cases and coverage gaps |
-| `.claude/skills/pg-hook-audit/` | Review PG hooks and callbacks for correctness |
-| `.claude/skills/upgrade-path/` | Verify upgrade and downgrade SQL migration scripts |
-| `.claude/skills/doc-example-tester/` | Validate SQL examples in documentation |
-| `sql/extension_lifecycle.sql` | Mandatory CREATE/ALTER/DROP regression tests |
-| `sql/doc_examples.sql` | Documentation example regression tests |
-| `expected/` | Expected pg_regress output |
-| `new-extension.sh` | Create a new extension repo from a local copy of this template |
+| `AGENTS.md` | Project rules read on every turn by both Claude Code and VS Code Copilot |
+| `.specify/memory/constitution.md` | Full code style, error handling, security, performance |
+| `.claude/skills/` | Auto-invoked review skills (Claude Code) |
+| `.claude/commands/` | Slash commands for explicit invocation in Claude Code |
+| `.github/prompts/` | Equivalent prompt files for VS Code Copilot |
+| `new-extension.sh` | Create a new extension repo from this template |
+| `overlay.sh` | Overlay AI instructions and skills onto an existing repo |
 | `project_template.md` | Repository structure and doc templates |
 
-## Quick Start
+## Usage
 
-Clone this template once, then create new extension repos from it:
+Two modes.
+
+**Bootstrap a new extension repo:**
 
 ```bash
 ~/git/pg-extension-template/new-extension.sh pg_myfeature
@@ -33,77 +30,121 @@ Clone this template once, then create new extension repos from it:
 ~/git/pg-extension-template/new-extension.sh pg_myfeature ~/git
 ```
 
-This copies only the AI instructions, skills, and test scaffolding,
-excludes template-only files (README, CHANGELOG, LICENSE), and initializes a
-clean git history.
+Copies the AI instructions, skills, and test scaffolding into a fresh repo
+with clean git history. Excludes template-only files (README, CHANGELOG,
+LICENSE).
+
+**Overlay onto an existing extension repo:**
+
+```bash
+~/git/pg-extension-template/overlay.sh --target ~/git/your-existing-extension
+```
+
+Copies `AGENTS.md`, `.specify/memory/constitution.md`, `.claude/skills/`,
+`.claude/commands/`, and `.github/prompts/` into the target repo. Files already
+present are skipped (rerun with `--force` to replace). Legacy `CLAUDE.md` and
+`.github/copilot-instructions.md` are renamed to `*.bak` so you can merge their
+content into `AGENTS.md` before deleting them. Requires a clean git working
+tree in the target so you can review the diff afterwards.
+
+The template intentionally provides only AI instructions and skills — no
+Makefile, `.control`, C stubs, or test scaffolds. Those belong in the
+extension itself, since the template is also used to overlay onto existing
+codebases. For a complete worked example with a Makefile, control file,
+sources, and tests, see `pg_helloworld` (forthcoming).
 
 ## Requirements
 
-- PostgreSQL 12+ with development headers (`postgresql-server-dev-XX` or Xcode CLT on macOS)
+- PostgreSQL 14+ with development headers (`postgresql-server-dev-XX` or Xcode CLT on macOS)
 - `pg_config` on `PATH`
 
-## Agentic AI Usage
+## Why AGENTS.md Is So Short
 
-### Claude Code
+Every line of AI instructions is context cost on every turn. Add a rule
+only when you've seen a specific failure it would have prevented. The
+depth lives in `.specify/memory/constitution.md`, read on demand.
 
-`CLAUDE.md` is read automatically. Invoke skills with natural language:
+## Personal Preferences (Optional)
 
+Communication style is a per-developer choice, not a project rule. Put it
+in `~/.claude/CLAUDE.md` — Claude Code merges it with `AGENTS.md`
+automatically. Starter:
+
+```markdown
+Be terse. Skip filler.
+Be constructively critical: flag concerns directly, don't hedge.
 ```
-Review my code changes for correctness
-Check test coverage
-Audit the hook I just added
-Verify the upgrade script is complete
-```
 
-### VS Code Copilot
+For VS Code Copilot, use `github.copilot.chat.codeGeneration.instructions`
+in user-scope `settings.json`.
 
-`.github/copilot-instructions.md` is loaded automatically. Skills are declared
-in the `<skills>` block and loaded on demand.
+## Skills and Slash Commands
 
-### speckit
+Skills auto-invoke when you describe a task that matches their description
+(e.g., "review my changes" triggers `code-review`). For explicit invocation,
+each skill has a slash command in both tools.
+
+| Purpose | Skill | Claude Code | VS Code Copilot |
+|---------|-------|------------|-----------------|
+| Full code review | `code-review` | `/code-review` | `code-review.prompt.md` |
+| Hook & callback audit | `pg-hook-audit` | `/audit-hooks` | `audit-hooks.prompt.md` |
+| Test coverage gaps | `test-coverage` | `/check-coverage` | `check-coverage.prompt.md` |
+| Upgrade/downgrade scripts | `upgrade-path` | `/verify-upgrade` | `verify-upgrade.prompt.md` |
+| Doc example tests | `doc-example-tester` | `/test-doc-examples` | `test-doc-examples.prompt.md` |
+| FDW review | `fdw-review` | `/fdw-review` | `fdw-review.prompt.md` |
+| Custom type review | `pg-type-review` | `/type-review` | `type-review.prompt.md` |
+
+### Skill Summaries
+
+**`code-review`** — Full static review. Memory, errors, security, index
+operator completeness, hook correctness, constitution compliance.
+
+**`test-coverage`** — Coverage analysis across SQL-exposed functions.
+Reports missing NULL, boundary, error, and index-usage tests.
+
+**`pg-hook-audit`** — Dedicated audit for code that registers PostgreSQL
+hooks. Enforces the save / NULL-check / call-chain / restore pattern.
+
+**`upgrade-path`** — Verifies upgrade and downgrade SQL scripts cover all
+objects created, modified, or removed between versions.
+
+**`doc-example-tester`** — Ensures every `-- Example:` block in README.md
+and `doc/*.md` has a matching, passing test in `sql/doc_examples.sql`.
+
+**`fdw-review`** — Audits Foreign Data Wrappers: callback set, cost estimation,
+WHERE / join / upper-rel pushdown, async and parallel scan, validator coverage,
+and `CREATE FOREIGN-*` SQL wiring.
+
+**`pg-type-review`** — Audits custom types: varlena layout, alignment, TOAST
+handling, in/out/send/recv, operator-class wiring (btree/hash/GiST/GIN),
+typmod handling, and round-trip coverage.
+
+## speckit Integration
 
 This template is compatible with [speckit](https://github.com/datastone/speckit).
 Run `speckit init` in the repo root. The constitution at
 `.specify/memory/constitution.md` is picked up automatically.
 
-## Skills Reference
-
-### `code-review`
-
-Full static review of PostgreSQL C extension code. Checks memory, errors,
-security, index operator completeness, hook correctness, and constitution compliance.
-
-### `test-coverage`
-
-Analyzes coverage across all SQL-exposed functions. Reports missing NULL, boundary,
-error, and index-usage test cases. Can generate skeleton test files.
-
-### `pg-hook-audit`
-
-Dedicated review for any code that registers PostgreSQL hooks (executor, planner,
-ProcessUtility, authentication, etc.). Enforces the save/NULL-check/call-chain/
-restore pattern.
-
-### `upgrade-path`
-
-Verifies that upgrade scripts (`ext--A--B.sql`) and downgrade scripts
-(`ext--B--A.sql`) cover all objects created, modified, or removed between versions.
-Generates test SQL for ALTER EXTENSION UPDATE cycles.
-
-### `doc-example-tester`
-
-Finds every `-- Example:` block in README.md and `doc/*.md` and ensures
-`sql/doc_examples.sql` has a matching, passing test.
-
 ## Development Workflow
 
-See `CLAUDE.md` for commands. The mandatory cycle is:
+The mandatory cycle (also stated in `AGENTS.md`):
 
 1. Write failing test in `sql/` and `expected/`
 2. `make installcheck` — confirm failure
 3. Implement in C
 4. `make installcheck` — confirm passing
-5. Run `code-review` skill before merging
+5. Run `/code-review` (or describe what you changed and let `code-review` auto-invoke) before merging
+
+Build commands:
+
+```bash
+make                          # Compile the extension
+sudo make install             # Install into PostgreSQL
+make installcheck             # Run pg_regress test suite
+make clean                    # Remove build artifacts
+```
+
+Use a dedicated test database — never test against `postgres`.
 
 ## License
 

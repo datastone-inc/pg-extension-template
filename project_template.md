@@ -9,22 +9,25 @@ All SQL examples in documentation MUST have corresponding regression tests in `s
 
 ```
 myextension/
+├── AGENTS.md                  # Project rules (read by Claude + Copilot)
 ├── .specify/
 │   └── memory/
-│       └── constitution.md    # Governing principles
-├── assets/
-│   └── datastone-logo.svg
-├── code_review_checklist.md
+│       └── constitution.md    # Full code style, security, performance
+├── .claude/
+│   ├── skills/                # Auto-invoked review skills
+│   └── commands/              # Slash commands for Claude Code
+├── .github/
+│   └── prompts/               # Equivalent prompts for VS Code Copilot
 ├── project_template.md
 ├── LICENSE
 ├── README.md
 ├── CHANGELOG.md
 ├── doc/
 │   └── user-guide.md
-├── sql/                       # pg_regress sql tests
-│   └── doc_examples.sql       # documentation examples tests
-├── expected/
-│   └── doc_examples.out
+├── sql/                       # pg_regress test scripts
+│   ├── extension_lifecycle.sql
+│   └── doc_examples.sql
+├── expected/                  # Expected pg_regress output
 └── ...
 ```
 

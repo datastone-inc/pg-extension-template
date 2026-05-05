@@ -47,13 +47,15 @@ rsync -a \
   --exclude='LICENSE' \
   --exclude='project_template.md' \
   --exclude='new-extension.sh' \
+  --exclude='overlay.sh' \
+  --exclude='.claude/settings.local.json' \
   "$TEMPLATE_DIR/" "$DEST/"
 echo "Copied template to $DEST"
 
 # ── Fresh git history ─────────────────────────────────────────────────────────
 
 cd "$DEST"
-git init
+git init -b master
 git add -A
 git commit -m "chore: initialize $EXTNAME from pg-extension-template"
 echo "Initialized clean git repository"

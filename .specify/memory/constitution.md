@@ -1,41 +1,44 @@
 # PostgreSQL Extension Development Constitution
 
-> **Location**: `.specify/memory/constitution.md`
->
-> This document governs all development in this repository. It supersedes all
-> other guidance. See `CLAUDE.md` at the repo root for quick-reference commands,
-> project layout, and available skills.
+> Full code style, error handling, security, performance, and project-structure
+> rules for PostgreSQL backend C extensions in this repository.
 
 ## I. Code Style & Formatting
 
 ### C Code (PostgreSQL Backend Extensions)
 
-C code for PostgreSQL backend extensions MUST follow K&R style with 2-space
-indentation. Opening brace on same line as control statement, closing brace
-aligned with control keyword. C++ is FORBIDDEN in PostgreSQL backend code.
+C code MUST use Allman brace style with 4-space indentation (no tabs). Opening
+brace on its own line, aligned with the control keyword. Closing brace on its
+own line at the same column. C++ is FORBIDDEN.
 
-Naming MUST use camelCase for functions/variables. PostgreSQL's conventional
-snake_case is acceptable for public API functions integrating with existing
-PostgreSQL patterns.
+Naming:
+- **Internal C symbols** (variables, static functions, struct fields you own):
+  camelCase. This matches a large fraction of PG core (`ExecInitNode`,
+  `MemoryContextAlloc`, `LockAcquire`).
+- **SQL-callable C functions** (those declared with `PG_FUNCTION_INFO_V1`):
+  snake_case. SQL folds unquoted identifiers to lowercase, so the C symbol
+  must match the SQL identifier exactly without forcing callers to double-quote.
 
 ```c
 static char *
-processData(const char *inputData, int maxLength) {
-  char *result;
-  int   len;
+processData(const char *inputData, int maxLength)
+{
+    char *result;
+    int   len;
 
-  if (inputData == NULL || maxLength <= 0) {
-    ereport(ERROR,
-            (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-             errmsg("invalid input parameters")));
-  }
+    if (inputData == NULL || maxLength <= 0)
+    {
+        ereport(ERROR,
+                (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+                 errmsg("invalid input parameters")));
+    }
 
-  len = strlen(inputData);
-  result = (char *)palloc(len + 1);
-  memcpy(result, inputData, len);
-  result[len] = '\0';
+    len = strlen(inputData);
+    result = (char *) palloc(len + 1);
+    memcpy(result, inputData, len);
+    result[len] = '\0';
 
-  return result;
+    return result;
 }
 ```
 
@@ -74,16 +77,15 @@ doxygen-style file header:
 
 ```c
 /*
- * Copyright (c) 2026 dataStone Inc.
+ * Copyright (c) <year> <your-org>
  * SPDX-License-Identifier: MIT
  */
 
 /**
  * @file extension_utils.c
  * @brief Utility functions for extension data processing
- * @author Dave Sharpe
- * @date 2025-12-13
- * This file was developed with assistance from AI tools.
+ * @author <your-name>
+ * @date <YYYY-MM-DD>
  */
 ```
 
@@ -111,11 +113,15 @@ PG_FUNCTION_INFO_V1(customtype_eq);
 Inline comments MUST use C++ `//` style. Explain WHY decisions were made, not
 WHAT the code does when self-evident.
 
-## III. Test-First Development
+## III. Regression Coverage
 
-TDD is MANDATORY using PostgreSQL's pg_regress framework.
+Every shipped change MUST have regression coverage in PostgreSQL's pg_regress
+framework. No change merges without a passing test that would have caught its
+absence. Test-first is the default cycle — it removes the most ambiguity about
+expected behavior — but writing tests and implementation together is acceptable
+when that is clearer; what is not acceptable is shipping without a test.
 
-Development cycle:
+Default cycle:
 1. Write regression test in `sql/` defining expected behavior
 2. Create expected output in `expected/`
 3. Verify test FAILS with current code
@@ -256,9 +262,7 @@ merge. Use the `test-coverage` skill to identify gaps before submitting.
 ## X. speckit Integration
 
 This repo uses speckit for structured feature development. Specs live in
-`specs/<NNN>-feature-name/`. The speckit constitution (this file) supplements
-`CLAUDE.md`. If a conflict arises, this document takes precedence on code style;
-`CLAUDE.md` takes precedence on commands and workflow.
+`specs/<NNN>-feature-name/`.
 
 speckit artifacts per feature:
 - `spec.md` — what to build and why
@@ -269,4 +273,10 @@ speckit artifacts per feature:
 
 ---
 
-**Version**: 3.0.0 | **Ratified**: 2026-04-23
+**Version**: 4.0.0 | **Ratified**: 2026-05-05
+
+Changes since 3.0.0:
+- C style switched to Allman / 4-space / no tabs
+- Naming clarified: camelCase for internal C, snake_case forced for SQL-callable
+- Top-of-file framing now defers to AGENTS.md for headline rules
+- Section X updated: CLAUDE.md no longer exists, AGENTS.md is the source of truth

@@ -23,8 +23,9 @@ Severity levels:
 ## Step 1: Identify Scope
 
 Determine what to review:
-- If files are specified in `$ARGUMENTS`, review those
-- Otherwise review all changed files: `git diff --name-only HEAD~1` or ask the user
+- Default: all files changed since the merge base — `git diff --name-only $(git merge-base HEAD master)..HEAD`
+- If only one commit's worth: `git diff --name-only HEAD~1`
+- If the user mentioned specific files, review those instead
 - Read each C file, SQL file, and the test files together
 
 ## Step 2: Memory Management
@@ -149,7 +150,8 @@ Also check:
 - [ ] Copyright/SPDX header present in every new file
 - [ ] Doxygen `@file`/`@brief`/`@author`/`@date` header present
 - [ ] Every SQL-callable function has a doxygen doc comment
-- [ ] K&R style, 2-space indentation (no tabs)
+- [ ] Allman style, 4-space indentation (no tabs)
+- [ ] Internal C symbols use camelCase; SQL-callable C functions use snake_case
 - [ ] Inline comments explain WHY, not WHAT
 - [ ] No dead code or commented-out code blocks
 - [ ] Compiles without warnings: `make 2>&1 | grep -E 'warning|error'`
