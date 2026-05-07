@@ -62,6 +62,7 @@ Every function that takes a varlena argument must detoast it:
 - [ ] `PG_DETOAST_DATUM_PACKED(arg)` — when the function works with the packed (1-byte header) form to avoid an unnecessary copy.
 - [ ] If detoasting via `PG_DETOAST_DATUM`, the result may equal the input (no copy made) — do **not** modify it in place.
 - [ ] If a copy was made, `pfree` it before return only if you didn't return it.
+- [ ] If the function used `PG_DETOAST_DATUM_PACKED` (or the input may have been packed), it calls `PG_FREE_IF_COPY(ptr, argno)` on every return path. Leaks are silent and only show up under load.
 
 **Flag as BLOCKER if:** Varlena argument is read with `VARSIZE` / `VARDATA` without detoasting first. Crashes on TOASTed input.
 
@@ -98,18 +99,37 @@ For each operator on the type:
 **btree opclass** (for `ORDER BY`, btree index, merge join):
 
 - [ ] All five strategies present: `<` (1), `<=` (2), `=` (3), `>=` (4), `>` (5).
-- [ ] Support function 1: comparison function `<typename>_cmp` returning `int32` (negative / zero / positive — not −1 / 0 / 1).
-- [ ] **Comparison total ordering**: for any `a, b, c`: if `cmp(a,b) < 0` and `cmp(b,c) < 0`, then `cmp(a,c) < 0`.
-- [ ] NULL handling: btree comparison functions are STRICT — registered with `STRICT` in SQL.
+- [ ] **Support function 1 (cmp)** — `<typename>_cmp` returning `int32` (negative / zero / positive — not −1 / 0 / 1). Registered as `STRICT`. Total ordering: for any `a, b, c`, if `cmp(a,b) < 0` and `cmp(b,c) < 0`, then `cmp(a,c) < 0`.
+- [ ] **Support function 2 (sortsupport)** — `<typename>_sortsupport(internal)`. Enables abbreviated-key compare (large speedup on sorts, `CREATE INDEX`, merge joins). Flag absence as **REQUIRED** for wide varlena types (decimals, strings, composites); **SUGGESTION** for narrow pass-by-value types where the win is small.
+- [ ] **Support function 3 (in_range)** — `<typename>_in_range(val, base, offset, sub, less)`. **REQUIRED** for numeric- and time-like types (window `RANGE BETWEEN <offset> PRECEDING/FOLLOWING` errors at runtime without it). **N/A** for string-, boolean-, enum-, and opaque-tag types — no natural offset arithmetic; PG's own `text`/`varchar` btree opclasses do not register it. Reviewer must record the N/A reason explicitly, not silently skip it.
+- [ ] **Support function 4 (equalimage)** — `<typename>_equalimage(oid)`. **REQUIRED**. Returning `true` enables btree dedup (smaller indexes, especially unique and high-cardinality secondary indexes). If the type has multiple binary representations of equal values (e.g., normalized vs unnormalized), the function must return `false` and the canonicalization edge that forces it must be called out.
+
+> **Common gap:** opclasses that register only `FUNCTION 1`. Verify each of 2/3/4 is implemented or has a documented N/A (e.g., string-like type → in_range N/A).
 
 **hash opclass** (for hash index, hash join):
 
 - [ ] Strategy 1 only: `=`.
-- [ ] Support function 1: hash function `<typename>_hash` returning `Datum` (an `int32` cast).
+- [ ] **Support function 1 (hash)** — `<typename>_hash` returning `Datum` (an `int32` cast).
+- [ ] **Support function 2 (hashextended)** — `<typename>_hash_extended(val, seed)` returning `int8`. **REQUIRED** if the type may participate in declarative hash partitioning. Must satisfy: low-32-bits agree with function 1's value when `seed = 0`. Skipping it silently breaks `PARTITION BY HASH (col)`.
 - [ ] **Equality consistency**: if `<typename>_eq(a, b)` returns true, then `hash(a) == hash(b)`. Always.
 - [ ] If the type has multiple internal representations of equal values (e.g., normalized vs unnormalized), the hash function must canonicalize first.
 
 **Flag as BLOCKER if:** hash and equality are inconsistent. Causes silent wrong results in hash joins.
+
+**Cross-type operator families** (relevant whenever the type interoperates with a built-in or sibling type — e.g., DB2-port types comparing against native `numeric` / `date`):
+
+- [ ] If users will write literals or columns of a *different but semantically-compatible* type against this type, those operators belong in an `OPERATOR FAMILY` shared between the two opclasses.
+- [ ] `CREATE OPERATOR FAMILY` is declared explicitly; opclasses use `FAMILY = <name>` and family-only operators are added via `ALTER OPERATOR FAMILY ... ADD OPERATOR ...`.
+- [ ] Cross-type operators include their own support functions (cross-type `cmp` for btree, cross-type `hash` for hash) registered via `ALTER OPERATOR FAMILY ... ADD FUNCTION`.
+- [ ] Without these, the planner refuses to use the index when the comparand is the cross-type — observable via `EXPLAIN` falling back to a seq scan.
+
+**Function attributes** (silent-degradation surface — `CREATE FUNCTION` defaults punish you):
+
+- [ ] In/out/recv/send and all operator-backing functions are declared `IMMUTABLE PARALLEL SAFE STRICT`. **REQUIRED** — the `VOLATILE PARALLEL UNSAFE` defaults disable plan-time constant folding and parallel scans.
+- [ ] Comparison and hash functions are `IMMUTABLE PARALLEL SAFE STRICT`.
+- [ ] Simple scalar comparison operators (`<`, `<=`, `=`, `>=`, `>`) are marked `LEAKPROOF` (pure, throw no errors, leak no data). **SUGGESTION** — without it, RLS / security-barrier views can't push the qual past the barrier.
+- [ ] `RESTRICT` / `JOIN` selectivity estimators set on each operator (typically `eqsel`/`eqjoinsel` for `=`, `scalarltsel`/`scalarltjoinsel` for `<`, etc.). **REQUIRED** — without them selectivity defaults to 0.5 / 0.005 and plans degenerate.
+- [ ] `COST` set on I/O and comparison functions when non-trivial (default `1` is fine for cheap functions; raise for expensive ones).
 
 ## Step 7: typmod (if applicable)
 
@@ -170,9 +190,13 @@ For the type, verify `sql/` includes:
 |---------|------------|--------|
 | in/out  | ✓ | ✓ |
 | send/recv | ✓ | ✗ |
-| btree opclass | ✓ | partial (no NULL ordering test) |
-| hash opclass | ✗ | — |
+| btree opclass | cmp ✓, sortsupport ✓, in_range N/A (string-like), equalimage ✓ | sort ✓, abbrev ✓, dedup smoke ✓ |
+| hash opclass  | hash ✓, hashextended ✓ | hash join ✓, partition smoke ✗ |
+| cross-type opfamily | ✓ (vs numeric) | ✗ |
 | TOAST round-trip | N/A | ✗ |
 ```
+
+List each support function by number, with the N/A reason inline — collapsing
+to a single `✓` is what lets gaps like "FUNCTION 1 only" sneak through.
 
 After presenting the report, call `AskUserQuestion`: walk through BLOCKERs interactively, apply all fixes, or just show the report.
